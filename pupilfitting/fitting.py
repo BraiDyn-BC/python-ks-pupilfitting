@@ -39,11 +39,15 @@ Ub = _np.array([[1, 0, 0], [0, 1, 0]])  # projection: homogeneous coords to norm
 
 def fit(xp: Iterable[float], yp: Iterable[float]) -> _Ellipse:
     """xp and yp must not contain NaNs."""
-    res = _sopts.least_squares(compute_loss, estimate_x0(xp=xp, yp=yp), kwargs=dict(xp=xp, yp=yp))
-    if res['success'] == True:
-        return _Ellipse.from_params(res['x'])
-    else:
-        return _Ellipse.NA()
+    try:
+        res = _sopts.least_squares(compute_loss, estimate_x0(xp=xp, yp=yp), kwargs=dict(xp=xp, yp=yp))
+        if res['success'] == True:
+            return _Ellipse.from_params(res['x'])
+        else:
+            return _Ellipse.NA()
+    except OverflowError:
+        pass
+    return _Ellipse.NA()
 
 
 def estimate_x0(
