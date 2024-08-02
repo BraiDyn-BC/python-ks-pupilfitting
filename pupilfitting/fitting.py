@@ -75,3 +75,4 @@ def compute_loss(
     M = _ellipse_to_circle(params)
     pts2 = Ub @ M @ pts
     return ((pts2 ** 2).sum(axis=0) - 1)
+

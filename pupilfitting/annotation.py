@@ -236,6 +236,7 @@ if _vio is None:
         centercolor: Optional[ColorSpec] = 'w',
         facecolor: Optional[ColorSpec] = 'c',
         bordercolor: Optional[ColorSpec] = None,
+        framerate: Optional[float] = None,
         verbose: bool = True
     ):
         raise NotImplementedError("install `scikit-video` to enable annotate_on_video()")
@@ -256,6 +257,9 @@ else:
         centercolor: Optional[ColorSpec] = 'w',
         facecolor: Optional[ColorSpec] = 'c',
         bordercolor: Optional[ColorSpec] = None,
+        framerate: Optional[float] = None,
+        framerange: Optional[Tuple[int]] = None,
+        desc: str = 'annotating',
         verbose: bool = True
     ):
         srcfile = Path(srcfile)
@@ -264,10 +268,16 @@ else:
             raise FileNotFoundError(str(srcfile))
         if not dstfile.parent.exists():
             dstfile.parent.mkdir(parents=True)
+        num_frames = annotation.shape[0]
+        if framerange is None:
+            framerange = (0, num_frames)
+        frame_start = min(framerange)
+        frame_stop  = max(framerange)
 
-        rate = _infer_frame_rate(srcfile)
-        indict = {'-r': rate}
-        outdict = {'-r': rate, '-q:v': '3'}
+        if framerate is None:
+            framerate = _infer_frame_rate(srcfile)
+        indict = {'-r': framerate}
+        outdict = {'-r': framerate, '-q:v': '10'}
         grid = None
         factor = 5  # NOTE: the upsampling factor for `grid`. fixed constant for the time being
 
@@ -277,11 +287,15 @@ else:
                 inputdict=indict,
                 outputdict=outdict
             ) as out:
-                iteration = zip(src.nextFrame(), _dlc.iterate_dataframe(annotation))
+                iteration = zip(range(num_frames), src.nextFrame(), _dlc.iterate_dataframe(annotation))
                 if verbose == True:
-                    iteration = _tqdm(iteration, total=annotation.shape[0], mininterval=1, smoothing=0.01)
+                    iteration = _tqdm(iteration, desc=desc, total=annotation.shape[0], mininterval=1, smoothing=0.01)
 
-                for frame, el in iteration:
+                for i, frame, el in iteration:
+                    if i < frame_start:
+                        continue
+                    elif i >= frame_stop:
+                        continue
                     if grid is None:
                         H, W = frame.shape[:2]
                         grid = Grid.mesh(width=W, height=H, factor=factor)
@@ -294,3 +308,4 @@ else:
                         facecolor=facecolor,
                         bordercolor=bordercolor
                     ))
+
