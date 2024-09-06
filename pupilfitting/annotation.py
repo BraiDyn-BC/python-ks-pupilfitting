@@ -20,7 +20,7 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
 
-from typing import Union, Tuple, Optional
+from typing import Union, Tuple, Optional, Dict
 from pathlib import Path
 from collections import namedtuple as _namedtuple
 import subprocess as _sp
@@ -50,6 +50,8 @@ from . import (
     ellipse as _ellipse,
     dlc as _dlc,
 )
+
+UPSAMPLING_FACTOR = 1  # NOTE: the upsampling factor for `grid`. fixed constant for the time being
 
 PathLike = Union[str, Path]
 Number = Union[int, float]
@@ -190,7 +192,7 @@ def overlay_images(*imgs) -> Image256:
 def annotate_frame(
     frame: ImageLike,
     ellipse: _ellipse.Ellipse,
-    centersize: Optional[float] = 5,
+    centersize: Optional[float] = 20,
     centercolor: Optional[ColorSpec] = 'w',
     centeralpha: float = 1.0,
     facecolor: Optional[ColorSpec] = 'c',
@@ -210,16 +212,18 @@ def annotate_frame(
     H, W = frame.shape[:2]
     if grid is None:
         grid = Grid.mesh(width=W, height=H, factor=grid_upsample)
+        centersize *= grid_upsample
+        borderwidth *= grid_upsample
     mask = ellipse_to_mask(ellipse, grid=grid)
 
     items = []
     items.append(frame)
     if draw_center:
-        center = point_to_mask(ellipse.cx, ellipse.cy, grid=grid, diameter=centersize * grid_upsample)
+        center = point_to_mask(ellipse.cx, ellipse.cy, grid=grid, diameter=centersize)
         center = _cv2.resize(center.astype(_np.float32), dsize=(W, H))
         items.append(color_mask(center, color=centercolor, alpha=centeralpha))
     if draw_border:
-        border = take_border(mask, borderwidth * grid_upsample)
+        border = take_border(mask, width=borderwidth)
         border = _cv2.resize(border.astype(_np.float32), dsize=(W, H))
         items.append(color_mask(border, color=bordercolor, alpha=borderalpha))
     if draw_face:
@@ -242,13 +246,16 @@ if _vio is None:
         raise NotImplementedError("install `scikit-video` to enable annotate_on_video()")
 
 else:
-    def _infer_frame_rate(videofile: Path) -> str:
+    def _infer_video_info(videofile: Path) -> Dict[str, str]:
         ret = _sp.run(['ffprobe', '-hide_banner', '-v', 'error',
                        '-i', str(videofile.resolve()), '-print_format', 'json',
                        '-show_streams', '-select_streams', 'v:0'],
                       capture_output=True, check=True)
         metadata = _json.loads(ret.stdout.decode())
-        return metadata['streams'][0]['avg_frame_rate']
+        return {
+            'framerate': metadata['streams'][0]['avg_frame_rate'],
+            'bitrate': metadata['streams'][0]['bit_rate'],
+        }
 
     def annotate_on_video(
         srcfile: PathLike,
@@ -274,19 +281,20 @@ else:
         frame_start = min(framerange)
         frame_stop  = max(framerange)
 
-        if framerate is None:
-            framerate = _infer_frame_rate(srcfile)
-        indict = {'-r': framerate}
-        outdict = {'-r': framerate, '-q:v': '10'}
+        info = _infer_video_info(srcfile)
+        if framerate is not None:
+            info['framerate'] = str(framerate)
+        indict = {'-r': info['framerate']}
+        outdict = {'-r': info['framerate'], '-b:v': info['bitrate']}
         grid = None
-        factor = 5  # NOTE: the upsampling factor for `grid`. fixed constant for the time being
+        factor = UPSAMPLING_FACTOR
 
-        with _vio.FFmpegReader(str(srcfile)) as src:
-            with _vio.FFmpegWriter(
+        with _vio.FFmpegReader(str(srcfile)) as src, _vio.FFmpegWriter(
                 str(dstfile),
                 inputdict=indict,
                 outputdict=outdict
             ) as out:
+            
                 iteration = zip(range(num_frames), src.nextFrame(), _dlc.iterate_dataframe(annotation))
                 if verbose == True:
                     iteration = _tqdm(iteration, desc=desc, total=annotation.shape[0], mininterval=1, smoothing=0.01)
